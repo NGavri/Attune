@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attune</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+  <style>
+    /* Minimal on purpose: css/style.css (Teammate B) does the real styling. */
+    [hidden] { display: none !important; }
+    #topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  </style>
+</head>
+<body>
+
+  <header id="topbar">
+    <h1 id="brand">Attune</h1>
+
+    <nav id="tabs" aria-label="Sections">
+      <button type="button" id="tabbtn-live" class="active" aria-current="page">Live</button>
+      <button type="button" id="tabbtn-relief">Relief</button>
+      <button type="button" id="tabbtn-history">History</button>
+      <button type="button" id="tabbtn-settings">Settings</button>
+    </nav>
+
+    <div id="controls">
+      <button type="button" id="btnConnect">Connect device</button>
+      <button type="button" id="btnDemo">Use demo data</button>
+      <button type="button" id="btnSimStress" hidden>Simulate stress</button>
+    </div>
+
+    <span id="status" role="status" aria-live="polite"></span>
+  </header>
+
+  <main>
+    <section id="tab-live">
+      <div id="live-graphs"></div>
+      <div id="live-side"></div>
+      <div id="live-actions"></div>
+    </section>
+    <section id="tab-relief" hidden></section>
+    <section id="tab-history" hidden></section>
+    <section id="tab-settings" hidden></section>
+  </main>
+
+  <div id="modal-root"></div>
+
+  <script src="js/bus.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/score.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/checkin.js"></script>
+  <script src="js/triggers.js"></script>
+  <script src="js/relief.js"></script>
+  <script src="js/history.js"></script>
+  <script>
+    // Tab switching + status text (the only logic that lives in index.html).
+    (function () {
+      var names = ['live', 'relief', 'history', 'settings'];
+
+      function showTab(name) {
+        names.forEach(function (n) {
+          var on = (n === name);
+          document.getElementById('tab-' + n).hidden = !on;
+          var btn = document.getElementById('tabbtn-' + n);
+          btn.classList.toggle('active', on);
+          if (on) { btn.setAttribute('aria-current', 'page'); }
+          else { btn.removeAttribute('aria-current'); }
+        });
+        attune.emit('tab', { name: name });
+      }
+
+      names.forEach(function (n) {
+        document.getElementById('tabbtn-' + n).addEventListener('click', function () {
+          showTab(n);
+        });
+      });
+
+      var statusEl = document.getElementById('status');
+      attune.on('status', function (d) {
+        statusEl.textContent = (d && d.msg) ? d.msg : '';
+      });
+    })();
+  </script>
+</body>
+</html>
