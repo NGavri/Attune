@@ -45,7 +45,12 @@
       } else if (kind === 'S') {
         var msg = line.slice(2).trim();     // keep commas inside the message
         if (!msg) return;
-        attune.emit('status', { msg: msg });
+        var friendly = {
+          ready: 'Device ready',
+          no_finger: 'Pulse sensor: no finger (OK without a pulse sensor)',
+          finger_ok: 'Pulse OK'
+        };
+        attune.emit('status', { msg: friendly[msg] || msg, raw: msg });
       }
       // any other first letter: ignored
     } catch (err) {
@@ -186,15 +191,126 @@
   }
 
 
-  /* ================================================================
-     TODO (NEXT STEP): WEB SERIAL CONNECTION
-     ----------------------------------------------------------------
-     - Click handler for #btnConnect (Chrome only: navigator.serial).
-     - navigator.serial.requestPort(), then port.open({ baudRate: 115200 }).
-     - Read bytes, decode to text, split on "\n" (keep the unfinished last
-       piece for the next chunk), and call handleLine(line) for each line.
-     - Call stopDemo() before connecting so the two streams don't mix.
-     - Emit attune.emit('status', { msg: ... }) on connect / disconnect / error.
-     ================================================================ */
+  /* ---------------- 3. WEB SERIAL CONNECTION (real device) ---------------- */
+
+  var btnConnect = document.getElementById('btnConnect');
+  var serial = {
+    port: null,
+    reader: null,
+    readableClosed: null,
+    connected: false,
+    lastDataAt: 0,
+    watchdog: null,
+    noDataShown: false
+  };
+
+  function setConnectText() {
+    if (btnConnect) btnConnect.textContent = serial.connected ? 'Disconnect' : 'Connect device';
+  }
+
+  // Count D lines so we can warn when data stops.
+  attune.on('sample', function () {
+    serial.lastDataAt = Date.now();
+    if (serial.connected && serial.noDataShown) {
+      serial.noDataShown = false;
+      attune.emit('status', { msg: 'Connected' });
+    }
+  });
+
+  async function readLoop() {
+    var buffer = '';
+    var decoder = new TextDecoderStream();
+    serial.readableClosed = serial.port.readable.pipeTo(decoder.writable).catch(function () {});
+    serial.reader = decoder.readable.getReader();
+    try {
+      while (true) {
+        var result = await serial.reader.read();
+        if (result.done) break;
+        if (!result.value) continue;
+        buffer += result.value;
+        var parts = buffer.split('\n');
+        buffer = parts.pop();                 // keep the unfinished piece
+        for (var i = 0; i < parts.length; i++) {
+          var line = parts[i].replace(/\r/g, '').trim();
+          if (line) handleLine(line);
+        }
+        if (buffer.length > 10000) buffer = ''; // garbage protection
+      }
+    } catch (err) {
+      console.warn('[attune serial] read stopped:', err);
+    } finally {
+      try { serial.reader.releaseLock(); } catch (e) { /* ignore */ }
+    }
+  }
+
+  async function connect() {
+    if (!('serial' in navigator)) {
+      attune.emit('status', { msg: 'Use Google Chrome on a laptop' });
+      return;
+    }
+    var port;
+    try {
+      port = await navigator.serial.requestPort();   // must run inside the click
+    } catch (err) {
+      attune.emit('status', { msg: 'No port selected' });
+      return;
+    }
+    try {
+      await port.open({ baudRate: 115200 });
+    } catch (err) {
+      console.error('[attune serial] open failed:', err);
+      attune.emit('status', { msg: 'Port busy - close Arduino Serial Monitor/Plotter and try again' });
+      return;
+    }
+
+    stopDemo();
+    serial.port = port;
+    serial.connected = true;
+    serial.lastDataAt = Date.now();
+    serial.noDataShown = false;
+    setConnectText();
+    attune.emit('status', { msg: 'Connected' });
+
+    serial.watchdog = setInterval(function () {
+      if (serial.connected && Date.now() - serial.lastDataAt > 3000 && !serial.noDataShown) {
+        serial.noDataShown = true;
+        attune.emit('status', { msg: 'No data - check the cable and the firmware' });
+      }
+    }, 1000);
+
+    readLoop().then(function () {
+      // Loop ended: user disconnected, or the cable was unplugged.
+      if (serial.connected) cleanup('Disconnected');
+    });
+  }
+
+  async function cleanup(msg) {
+    var wasConnected = serial.connected;
+    serial.connected = false;
+    if (serial.watchdog) { clearInterval(serial.watchdog); serial.watchdog = null; }
+    try { if (serial.reader) await serial.reader.cancel(); } catch (e) { /* ignore */ }
+    try { if (serial.readableClosed) await serial.readableClosed; } catch (e) { /* ignore */ }
+    try { if (serial.port) await serial.port.close(); } catch (e) { /* ignore */ }
+    serial.reader = null;
+    serial.readableClosed = null;
+    serial.port = null;
+    setConnectText();
+    if (wasConnected) attune.emit('status', { msg: msg || 'Disconnected' });
+  }
+
+  if (btnConnect) {
+    btnConnect.addEventListener('click', function () {
+      if (serial.connected) cleanup('Disconnected');
+      else connect();
+    });
+  }
+
+  if ('serial' in navigator) {
+    navigator.serial.addEventListener('disconnect', function (e) {
+      if (serial.port && e.target === serial.port) cleanup('Device unplugged');
+    });
+  }
+
+
 
 })();
